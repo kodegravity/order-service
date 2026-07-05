@@ -1,0 +1,209 @@
+name: order-service — Build & Deploy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRIGGERS
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "order-service/**"          # only fire when order-service files change
+
+  workflow_dispatch:                # allow one-click manual runs from GitHub UI
+    inputs:
+      reason:
+        description: "Reason for manual deploy"
+        required: false
+        default: "Manual trigger"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GLOBAL ENVIRONMENT
+# ─────────────────────────────────────────────────────────────────────────────
+env:
+  AWS_REGION:           ${{ vars.AWS_REGION }}           # ca-central-1
+  ECR_REPOSITORY:       order-service
+  ECS_CLUSTER:          food-delivery-dev-cluster
+  ECS_SERVICE:          order-service
+  CONTAINER_NAME:       order-service
+  TASK_DEFINITION_FILE: order-service/ecs-task-definition.json
+
+# Cancel any in-progress run for the same branch so pushes don't queue up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 1 — TEST
+  # Runs unit / integration tests in isolation.
+  # Deploy job only starts if this passes.
+  # ───────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: order-service   # all steps run from the service root
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      # Fetches the full repository so Maven can resolve local modules.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 ──────────────────────────────────────────────────────────
+      # Sets up the JDK. 'temurin' matches the Eclipse Temurin runtime used in
+      # the Docker image, keeping build and runtime environments consistent.
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # ── 3. Maven dependency cache ────────────────────────────────────────────
+      # Caches ~/.m2/repository keyed on pom.xml hash.
+      # Cache hit → dependency download is skipped → build is 2-4× faster.
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('order-service/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # ── 4. Run tests ─────────────────────────────────────────────────────────
+      # -B         → batch mode (no ANSI, cleaner CI logs)
+      # verify     → runs compile + test + integration-test lifecycle phases
+      # surefire-report is available in target/surefire-reports/
+      - name: Run Maven tests
+        run: mvn verify -B
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2 — BUILD & DEPLOY
+  # Runs only after 'test' succeeds.
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    needs: test                        # hard dependency on test job
+
+    # Required for GitHub OIDC token (used instead of long-lived AWS keys).
+    permissions:
+      id-token: write                  # allow requesting OIDC JWT
+      contents: read                   # allow checkout
+
+    defaults:
+      run:
+        working-directory: order-service
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 ──────────────────────────────────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # ── 3. Maven dependency cache ────────────────────────────────────────────
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('order-service/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # ── 4. Build JAR ─────────────────────────────────────────────────────────
+      # -DskipTests → tests already ran in the 'test' job; no need to repeat.
+      # package     → produces the fat JAR at target/order-service-*.jar
+      - name: Build JAR (skip tests)
+        run: mvn package -DskipTests -B
+
+      # ── 5. Configure AWS credentials via OIDC ────────────────────────────────
+      # GitHub exchanges its OIDC token for temporary AWS credentials.
+      # No long-lived AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY needed.
+      # AWS_ROLE_TO_ASSUME must be a GitHub secret; it contains the full IAM
+      # role ARN (e.g. arn:aws:iam::123456789012:role/GitHubActionsRole).
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume:    ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region:        ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-OrderService-${{ github.run_id }}
+
+      # ── 6. Login to Amazon ECR ───────────────────────────────────────────────
+      # Retrieves a temporary docker login token from ECR and calls
+      # 'docker login' automatically. Output 'registry' is used below.
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── 7. Build & push Docker image ─────────────────────────────────────────
+      # Two tags are pushed on every deploy:
+      #   :latest        → always points to the most recent build
+      #   :<git-sha>     → immutable; use this in rollbacks and audit logs
+      # The Dockerfile is read from order-service/Dockerfile.
+      # Build context is order-service/ so COPY instructions work correctly.
+      - name: Build and push Docker image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG:    ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+
+          docker build \
+            -t "$IMAGE_URI:$IMAGE_TAG" \
+            -t "$IMAGE_URI:latest" \
+            -f Dockerfile \
+            .
+
+          docker push "$IMAGE_URI:$IMAGE_TAG"
+          docker push "$IMAGE_URI:latest"
+
+          # Pass the full versioned URI to the task-definition step below.
+          echo "image=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      # ── 8. Render new ECS task definition ────────────────────────────────────
+      # Reads the JSON template from order-service/ecs-task-definition.json,
+      # replaces the image field for 'order-service' container with the new URI,
+      # and writes the result to a temp file used by the deploy step.
+      - name: Render ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.TASK_DEFINITION_FILE }}
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-image.outputs.image }}
+
+      # ── 9. Deploy to ECS ─────────────────────────────────────────────────────
+      # Registers the updated task definition revision, then updates the ECS
+      # service to use it.  'wait-for-service-stability: true' blocks until
+      # the rolling deploy completes (old tasks stopped, new tasks healthy)
+      # or fails (triggers rollback if circuit breaker is enabled).
+      - name: Deploy to ECS Fargate
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:          ${{ steps.render-task-def.outputs.task-definition }}
+          service:                  ${{ env.ECS_SERVICE }}
+          cluster:                  ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # ── 10. Summary ──────────────────────────────────────────────────────────
+      - name: Print deployment summary
+        run: |
+          echo "### ✅ Deployment complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field         | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| ------------- | ----- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service       | $ECS_SERVICE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cluster       | $ECS_CLUSTER |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image tag     | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Region        | $AWS_REGION |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by  | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY

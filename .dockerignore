@@ -1,0 +1,29 @@
+# Build output
+target/
+
+# Version control
+.git/
+.gitignore
+
+# IDE / editor files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# Documentation
+README.md
+HELP.md
+*.md
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Docker files (no need to copy into image)
+Dockerfile
+.dockerignore
+
+# CI/CD
+.github/
