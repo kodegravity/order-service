@@ -1,0 +1,20 @@
+# Test profile — uses H2 in-memory database instead of PostgreSQL.
+# Activated by @ActiveProfiles("test") on the test class.
+spring:
+  datasource:
+    url: "jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;INIT=CREATE SCHEMA IF NOT EXISTS order_service"
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+    hikari:
+      connection-init-sql:    # override — H2 doesn't need the CREATE SCHEMA init SQL
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop   # rebuild schema fresh for every test run
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        default_schema: order_service
+        format_sql: true

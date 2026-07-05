@@ -1,30 +1,58 @@
 server:
   port: 8083
+  shutdown: graceful                        # drain in-flight requests on SIGTERM
 
 spring:
   application:
     name: order-service
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/order_db
-    username: postgres
-    password: postgres
+    # ── Shared RDS database ───────────────────────────────────────────────────
+    # All food-delivery services share the same 'fooddelivery' database.
+    # Each service is isolated inside its own PostgreSQL schema:
+    #   order-service   → schema: order_service
+    #   user-service    → schema: user_service
+    #   restaurant-svc  → schema: restaurant_service
+    #
+    # 'sslmode=require' encrypts the connection to RDS (required by AWS RDS).
+    # 'currentSchema'   sets the Postgres search_path so queries resolve to the
+    #                   correct schema without fully-qualifying table names.
+    url: "jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME:fooddelivery}?sslmode=require&currentSchema=${DB_SCHEMA:order_service}"
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Auto-create the schema on first connection if it doesn't exist yet.
+      # Safe to run every time — IF NOT EXISTS is idempotent.
+      connection-init-sql: "CREATE SCHEMA IF NOT EXISTS order_service"
+      connection-timeout: 20000             # fail fast if RDS is unreachable
+      maximum-pool-size: 10
+      minimum-idle: 2
 
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: update                      # auto-create / migrate tables on start
+    show-sql: false                         # too noisy in production
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        # Tells Hibernate to create/reference all tables inside this schema.
+        # Result: 'orders' → 'order_service.orders'
+        #         'order_items' → 'order_service.order_items'
+        default_schema: ${DB_SCHEMA:order_service}
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s         # Spring graceful shutdown window
 
 management:
   endpoints:
     web:
       exposure:
-        include: health, info
+        include: health,info
   endpoint:
     health:
-      show-details: always
+      show-details: always                  # ECS health checks see full DB status
+  health:
+    db:
+      enabled: true

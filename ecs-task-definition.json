@@ -4,12 +4,12 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskRole",
+  "executionRoleArn": "arn:aws:iam::512383926725:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::512383926725:role/ecsTaskRole",
   "containerDefinitions": [
     {
       "name": "order-service",
-      "image": "<ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com/order-service:latest",
+      "image": "512383926725.dkr.ecr.us-east-2.amazonaws.com/order-service:latest",
       "essential": true,
       "portMappings": [
         {
@@ -19,18 +19,28 @@
         }
       ],
       "environment": [
-        { "name": "DB_HOST",     "value": "<RDS_ENDPOINT>" },
-        { "name": "DB_PORT",     "value": "5432" },
-        { "name": "DB_NAME",     "value": "order_db" }
+        { "name": "DB_SCHEMA", "value": "order_service" }
       ],
       "secrets": [
         {
+          "name": "DB_HOST",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:512383926725:secret:food-delivery/dev/db/credentials-LnJxkJ:host::"
+        },
+        {
+          "name": "DB_PORT",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:512383926725:secret:food-delivery/dev/db/credentials-LnJxkJ:port::"
+        },
+        {
+          "name": "DB_NAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:512383926725:secret:food-delivery/dev/db/credentials-LnJxkJ:dbname::"
+        },
+        {
           "name": "DB_USERNAME",
-          "valueFrom": "arn:aws:secretsmanager:ca-central-1:<ACCOUNT_ID>:secret:food-delivery/order-service/db-credentials:username::"
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:512383926725:secret:food-delivery/dev/db/credentials-LnJxkJ:username::"
         },
         {
           "name": "DB_PASSWORD",
-          "valueFrom": "arn:aws:secretsmanager:ca-central-1:<ACCOUNT_ID>:secret:food-delivery/order-service/db-credentials:password::"
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:512383926725:secret:food-delivery/dev/db/credentials-LnJxkJ:password::"
         }
       ],
       "healthCheck": {
@@ -47,7 +57,7 @@
         "logDriver": "awslogs",
         "options": {
           "awslogs-group":         "/ecs/order-service",
-          "awslogs-region":        "ca-central-1",
+          "awslogs-region":        "us-east-2",
           "awslogs-stream-prefix": "ecs"
         }
       },
