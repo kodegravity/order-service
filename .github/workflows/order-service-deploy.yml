@@ -7,10 +7,8 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "order-service/**"          # only fire when order-service files change
 
-  workflow_dispatch:                # allow one-click manual runs from GitHub UI
+  workflow_dispatch:
     inputs:
       reason:
         description: "Reason for manual deploy"
@@ -22,13 +20,12 @@ on:
 # ─────────────────────────────────────────────────────────────────────────────
 env:
   AWS_REGION:           ${{ vars.AWS_REGION }}
-  ECR_REPOSITORY:       food-delivery/order-service   # full ECR repository path
+  ECR_REPOSITORY:       food-delivery/order-service
   ECS_CLUSTER:          food-delivery-dev-cluster
   ECS_SERVICE:          order-service
   CONTAINER_NAME:       order-service
-  TASK_DEFINITION_FILE: order-service/ecs-task-definition.json
+  TASK_DEFINITION_FILE: ecs-task-definition.json   # file is at repo root
 
-# Cancel any in-progress run for the same branch so pushes don't queue up.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -40,10 +37,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: order-service
+    # No working-directory override — runs from repo root
 
     steps:
       - name: Checkout code
@@ -55,11 +49,12 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
+      # pom.xml is at repo root — no subdirectory prefix
       - name: Cache Maven dependencies
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('order-service/pom.xml') }}
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-maven-
 
@@ -75,12 +70,9 @@ jobs:
     needs: test
 
     permissions:
-      id-token: write     # required for GitHub OIDC token
+      id-token: write
       contents: read
-
-    defaults:
-      run:
-        working-directory: order-service
+    # No working-directory override — runs from repo root
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
@@ -99,18 +91,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('order-service/pom.xml') }}
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-maven-
 
       # ── 4. Build JAR ──────────────────────────────────────────────────────────
-      # -DskipTests → tests already ran in the 'test' job above.
       - name: Build JAR (skip tests)
         run: mvn package -DskipTests -B
 
       # ── 5. Configure AWS credentials via OIDC ─────────────────────────────────
-      # GitHub exchanges its OIDC token for temporary AWS credentials.
-      # No long-lived AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY needed.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -119,8 +108,6 @@ jobs:
           role-session-name: GitHubActions-OrderService-${{ github.run_id }}
 
       # ── 6. Debug — AWS identity ───────────────────────────────────────────────
-      # Confirms which IAM role was assumed. If credentials are wrong this step
-      # fails here with a clear message rather than a cryptic push error later.
       - name: Print AWS caller identity
         run: aws sts get-caller-identity
 
@@ -129,7 +116,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ── 8. Debug — ECR registry info ──────────────────────────────────────────
+      # ── 8. Debug — ECR info ───────────────────────────────────────────────────
       - name: Print ECR registry
         run: |
           echo "ECR Registry : ${{ steps.login-ecr.outputs.registry }}"
@@ -137,8 +124,6 @@ jobs:
           echo "Full URI     : ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY"
 
       # ── 9. Verify ECR repository exists ───────────────────────────────────────
-      # Fails fast with a clear error if the ECR repo doesn't exist,
-      # instead of getting a cryptic error during docker push.
       - name: Verify ECR repository exists
         run: |
           aws ecr describe-repositories \
@@ -148,12 +133,7 @@ jobs:
             --output text
 
       # ── 10. Build & push Docker image ─────────────────────────────────────────
-      # Dockerfile:    order-service/Dockerfile  (working-directory is order-service)
-      # Build context: order-service/            ('.' resolves to working-directory)
-      # Tags pushed:   :latest  and  :<git-sha>
-      #
-      #   :latest    → always points to the newest build
-      #   :<git-sha> → immutable; use for rollbacks and audit logs
+      # Dockerfile and build context are both at repo root ('.')
       - name: Build and push Docker image
         id: build-image
         env:
@@ -183,8 +163,7 @@ jobs:
         run: echo "Image deployed → ${{ steps.build-image.outputs.image }}"
 
       # ── 12. Render ECS task definition ────────────────────────────────────────
-      # Reads order-service/ecs-task-definition.json, swaps the image field for
-      # the 'order-service' container with the new versioned URI, writes to temp file.
+      # ecs-task-definition.json is at repo root
       - name: Render ECS task definition
         id: render-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -194,8 +173,6 @@ jobs:
           image:           ${{ steps.build-image.outputs.image }}
 
       # ── 13. Deploy to ECS Fargate ─────────────────────────────────────────────
-      # Registers a new task definition revision, updates the ECS service,
-      # and waits for the rolling deploy to finish before marking the job successful.
       - name: Deploy to ECS Fargate
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
