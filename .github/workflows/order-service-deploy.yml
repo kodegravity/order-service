@@ -20,8 +20,8 @@ on:
 env:
   AWS_REGION:           us-east-2
   ECR_REPOSITORY:       food-delivery/order-service
-  ECS_CLUSTER:          food-delivery-dev-cluster
-  ECS_SERVICE:          order-service
+  ECS_CLUSTER:          food-delivery-dev
+  ECS_SERVICE:          food-delivery-dev-order-service
   CONTAINER_NAME:       order-service
   TASK_DEFINITION_FILE: ecs-task-definition.json   # file is at repo root
 
