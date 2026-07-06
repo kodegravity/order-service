@@ -19,7 +19,7 @@ on:
 # GLOBAL ENVIRONMENT
 # ─────────────────────────────────────────────────────────────────────────────
 env:
-  AWS_REGION:           ${{ vars.AWS_REGION }}
+  AWS_REGION:           us-east-2
   ECR_REPOSITORY:       food-delivery/order-service
   ECS_CLUSTER:          food-delivery-dev-cluster
   ECS_SERVICE:          order-service
@@ -101,7 +101,7 @@ jobs:
 
       # ── 5. Configure AWS credentials via OIDC ─────────────────────────────────
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v4.1.0
         with:
           role-to-assume:    ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region:        ${{ env.AWS_REGION }}
@@ -114,7 +114,7 @@ jobs:
       # ── 7. Login to Amazon ECR ────────────────────────────────────────────────
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@v2.0.1
 
       # ── 8. Debug — ECR info ───────────────────────────────────────────────────
       - name: Print ECR registry
@@ -166,7 +166,7 @@ jobs:
       # ecs-task-definition.json is at repo root
       - name: Render ECS task definition
         id: render-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        uses: aws-actions/amazon-ecs-render-task-definition@v1.9.0
         with:
           task-definition: ${{ env.TASK_DEFINITION_FILE }}
           container-name:  ${{ env.CONTAINER_NAME }}
@@ -174,7 +174,7 @@ jobs:
 
       # ── 13. Deploy to ECS Fargate ─────────────────────────────────────────────
       - name: Deploy to ECS Fargate
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2.3.0
         with:
           task-definition:            ${{ steps.render-task-def.outputs.task-definition }}
           service:                    ${{ env.ECS_SERVICE }}
