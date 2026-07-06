@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::512383926725:role/ecsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::512383926725:role/ecsTaskRole",
+  "executionRoleArn": "arn:aws:iam::512383926725:role/food-delivery-dev-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::512383926725:role/food-delivery-dev-ecs-task-role",
   "containerDefinitions": [
     {
       "name": "order-service",
