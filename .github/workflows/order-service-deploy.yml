@@ -6,8 +6,7 @@ name: order-service — Build & Deploy
 on:
   push:
     branches:
-      - main
-
+      - master
   workflow_dispatch:
     inputs:
       reason:
