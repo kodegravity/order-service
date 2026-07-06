@@ -99,7 +99,18 @@ jobs:
       - name: Build JAR (skip tests)
         run: mvn package -DskipTests -B
 
-      # ── 5. Configure AWS credentials via OIDC ─────────────────────────────────
+      # ── 5. Debug — print exact OIDC sub claim ────────────────────────────────
+      # Prints the exact sub claim GitHub will send to AWS so you can match
+      # it against the IAM trust policy condition.
+      # Format: repo:<owner>/<repo>:ref:refs/heads/<branch>
+      - name: Print OIDC subject claim
+        run: |
+          echo "GitHub repository : ${{ github.repository }}"
+          echo "GitHub ref        : ${{ github.ref }}"
+          echo "Expected sub      : repo:${{ github.repository }}:ref:${{ github.ref }}"
+          echo "Run triggered by  : ${{ github.actor }}"
+
+      # ── 6. Configure AWS credentials via OIDC ─────────────────────────────────
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4.1.0
         with:
